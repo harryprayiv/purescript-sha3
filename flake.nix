@@ -40,8 +40,10 @@
 
       devShell = pkgs.mkShell {
         inherit name;
-        
-
+        CHEZ_DYLD_LIBRARY_PATH = "${pkgs.pcre2.out}/lib:${pkgs.icu.out}/lib";
+        LD_LIBRARY_PATH = "${pkgs.pcre2.out}/lib:${pkgs.icu.out}/lib";
+        # CHEZSCHEMELIBDIRS = "${pkgs.chez-srfi}/lib/csv10.3-site:";
+        CHEZSCHEMELIBDIRS = "${pkgs.chez-srfi}/lib/${pkgs.chez.name}-site:";
         buildInputs = with pkgs; [
 
           esbuild
@@ -54,6 +56,12 @@
           spago-unstable # new spago
           # spago
       
+          purescm
+          chez
+          pcre2
+          icu
+          chez-srfi
+
 
         ] ++ (pkgs.lib.optionals (system == "aarch64-darwin")
           (with pkgs.darwin.apple_sdk.frameworks; [

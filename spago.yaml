@@ -8,13 +8,16 @@ package:
     - foldable-traversable
     - integers
     - maybe
-    - node-buffer
     - prelude
     - strings
   test:
-    main: Test.Crypto.SHA3
+    main: Test.SHA3
     dependencies: []
 workspace:
   packageSet:
-    registry: 73.0.0
+    url: https://raw.githubusercontent.com/purescm/purescm/refs/heads/master/package-sets/1.0.0.json
   extraPackages: {}
+  backend:
+    cmd: purescm
+    args:
+      - "build"

@@ -1,176 +1,116 @@
-# purescript-sha3
+# SHA-3 for PureScript — Chez Scheme Backend
 
-Pure PureScript implementation of SHA-3 (FIPS 202) cryptographic hash functions and extendable-output functions.
+A pure PureScript implementation of SHA-3 (FIPS 202) targeting the
+[purescm](https://github.com/purescm/purescm) Chez Scheme backend.
 
-No native dependencies — the full Keccak-f[1600] permutation and sponge construction are implemented in PureScript, verified against NIST test vectors.
+## Why Rewrite?
 
+The JavaScript backend limits PureScript's `Int` to 32-bit signed range
+`[-2^31, 2^31-1]`. Keccak-f[1600] operates on 25 × **64-bit** lanes,
+so the JS version had to split every lane into `{ hi :: Int, lo :: Int }`
+pairs and thread two-halves arithmetic through every operation:
 
+```purescript
+-- JS backend: every operation is doubled
+type Lane = { hi :: Int, lo :: Int }
 
-### Features
+xorLane :: Lane -> Lane -> Lane
+xorLane a b = { hi: xor a.hi b.hi, lo: xor a.lo b.lo }
 
-- SHA3-224, SHA3-256, SHA3-384, SHA3-512 hash functions
-- SHAKE128, SHAKE256 extendable-output functions (XOFs)
-- `Hashable` typeclass for `String` and `Buffer` inputs
-- `Digest` newtype with `Eq` and `Show` instances
-- Hex encoding/decoding
-
-
-
-### Install
-
-Add to your `spago.yaml` dependencies:
-
-```yaml
-workspace:
-  extra_packages:
-    sha3:
-      git: https://github.com/rowtype-yoga/purescript-sha3.git
-      ref: main
-      subdir: null
-
-package:
-  dependencies:
-    - sha3
+rotL :: Lane -> Int -> Lane
+rotL lane n
+  | n < 32  = { hi: (lane.hi `shl` n) .|. (lane.lo `zshr` (32 - n))
+              , lo: (lane.lo `shl` n) .|. (lane.hi `zshr` (32 - n)) }
+  | ...     -- 4 more cases
 ```
 
-##### Nix
+On Chez Scheme, integers are arbitrary-precision with hardware fixnums
+up to 61 bits and seamless bignum promotion. All of that collapses to:
 
-A flake is provided for development:
+```purescript
+-- Chez backend: one native integer per lane
+type Word64 = Int
+
+foreign import w64xor  :: Word64 -> Word64 -> Word64
+foreign import w64rotL :: Word64 -> Int -> Word64
+```
+
+The Scheme FFI is trivial:
+
+```scheme
+(define w64xor
+  (lambda (a) (lambda (b)
+    (logand (logxor a b) #xFFFFFFFFFFFFFFFF))))
+
+(define w64rotL
+  (lambda (x) (lambda (n)
+    (logand (logior (ash x n) (ash x (- n 64)))
+            #xFFFFFFFFFFFFFFFF))))
+```
+
+## What Changed
+
+| Aspect | JS Backend | Chez Backend |
+|--------|-----------|--------------|
+| Lane representation | `{ hi :: Int, lo :: Int }` record | Single `Int` (= Word64) |
+| Bitwise ops | Manual hi/lo threading, 4+ cases for rotL | Direct `logxor`/`logand`/`logior`/`ash` |
+| Round constants | 24 × `{ hi, lo }` records with `b31` helper | 24 × native hex literals like `#x8000000080008008` |
+| Buffer FFI | Node.js `Buffer` via 6 JS FFI functions | Chez `string->utf8` + bytevector ops |
+| `Node.Buffer` dependency | Required | Eliminated |
+| `Data.Int.Bits` dependency | Required (`shl`, `zshr`, `xor`, `.&.`, `.|.`) | Eliminated (ops in Scheme FFI) |
+
+## Architecture
+
+```
+src/
+  Crypto/
+    SHA3.purs          -- Public API (Hashable, Digest, SHA3 variants, SHAKE)
+    SHA3.ss            -- Chez FFI: stringToUtf8, bytesToHex, hexToBytes
+    Keccak.purs        -- Sponge construction + Keccak-f[1600] permutation
+    Keccak.ss          -- Chez FFI: roundConstants (24 × 64-bit), orInt
+    Word64.purs        -- Word64 type + operations (PureScript interface)
+    Word64.ss          -- Chez FFI: w64xor, w64and, w64rotL, etc.
+test/
+  Test/
+    SHA3.purs          -- NIST test vectors (identical expected values)
+```
+
+## Building
+
+Requires `purescm` (the Chez Scheme backend for PureScript) and Chez Scheme.
 
 ```bash
-nix develop
 spago build
+purescm run
 ```
 
+## Test Vectors
 
+All test vectors are from NIST FIPS 202 and match the JS backend exactly:
+SHA3-224, SHA3-256, SHA3-384, SHA3-512, SHAKE128, SHAKE256, multi-block inputs.
 
-### Examples
+## Notes on Chez Scheme's Integer Model
 
+- **Fixnums**: On 64-bit Chez, fixnums cover `[-2^60, 2^60-1]` (61-bit,
+  3 tag bits). Most Keccak intermediate values fit in fixnums.
+- **Bignums**: Values exceeding fixnum range (like round constants with
+  bit 63 set, e.g. `#x8000000080008008`) promote to bignums transparently.
+  Chez's bignum arithmetic is highly optimized.
+- **Masking**: We mask with `#xFFFFFFFFFFFFFFFF` after complement and
+  shift operations that could produce values outside `[0, 2^64-1]`.
+  XOR and AND of two 64-bit values stay in range naturally.
 
-##### Hash a string
+## FFI Library Naming Convention
 
-```haskell
-import Crypto.SHA3 (SHA3(..), hash, toString)
+Each `.ss` file uses the purescm convention:
 
-toString (hash SHA3_256 "purescript ftw")
--- "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532"
+```scheme
+(library (Crypto.Word64 foreign)
+  (export ...)
+  (import (chezscheme))
+  ...)
 ```
 
-
-##### Hash a Buffer
-
-```haskell
-import Crypto.SHA3 (sha3_256, toString)
-import Node.Buffer as Buffer
-
-main = do
-  buf <- Buffer.fromArray [0xDE, 0xAD, 0xBE, 0xEF]
-  log (toString (sha3_256 buf))
-```
-
-
-##### Compare digests
-
-```haskell
-import Crypto.SHA3 (SHA3(..), hash)
-
-sameDigest = hash SHA3_256 "hello" == hash SHA3_256 "hello"
--- true
-
-differentDigest = hash SHA3_256 "hello" == hash SHA3_256 "world"
--- false
-```
-
-
-##### SHAKE128/SHAKE256 (variable-length output)
-
-```haskell
-import Crypto.SHA3 (shake128, shake256)
-import Node.Buffer as Buffer
-
-main = do
-  msg <- Buffer.fromString "some input" Buffer.UTF8
-  let out = shake256 64 msg  -- 64 bytes of output
-  log (bufferToHex out)
-```
-
-
-##### Hex decoding
-
-```haskell
-import Crypto.SHA3 (SHA3(..), hash, toString, fromHex)
-
-main = do
-  let digest = hash SHA3_256 "hello"
-  let hex    = toString digest
-  let round  = fromHex hex  -- Just (Digest ...)
-  log (show (map toString round))
-```
-
-
-##### Export digest to Buffer
-
-```haskell
-import Crypto.SHA3 (SHA3(..), hash, exportToBuffer)
-import Node.FS.Sync (writeFile)
-
-main = do
-  let digest = hash SHA3_512 "important data"
-  writeFile "digest.bin" (exportToBuffer digest)
-```
-
-
-
-### API
-
-| Function | Type | Description |
-|---|---|---|
-| `hash` | `SHA3 -> a -> Digest` | Hash any `Hashable` (String or Buffer) |
-| `sha3_224` | `Buffer -> Digest` | SHA3-224 (28 bytes) |
-| `sha3_256` | `Buffer -> Digest` | SHA3-256 (32 bytes) |
-| `sha3_384` | `Buffer -> Digest` | SHA3-384 (48 bytes) |
-| `sha3_512` | `Buffer -> Digest` | SHA3-512 (64 bytes) |
-| `shake128` | `Int -> Buffer -> Buffer` | SHAKE128 XOF, variable output |
-| `shake256` | `Int -> Buffer -> Buffer` | SHAKE256 XOF, variable output |
-| `toString` | `Digest -> String` | Hex-encode a digest |
-| `fromHex` | `String -> Maybe Digest` | Decode hex to a digest |
-| `exportToBuffer` | `Digest -> Buffer` | Extract raw Buffer |
-| `importFromBuffer` | `Buffer -> Maybe Digest` | Wrap a Buffer as a Digest |
-
-
-
-### Running tests
-
-```bash
-nix develop
-spago test
-```
-
-```
-SHA-3 (FIPS 202) Test Suite
-
-  ✓ SHA3-224("")
-  ✓ SHA3-224("abc")
-  ✓ SHA3-256("")
-  ✓ SHA3-256("abc")
-  ✓ SHA3-256(multi-block)
-  ✓ SHA3-384("")
-  ✓ SHA3-384("abc")
-  ✓ SHA3-512("")
-  ✓ SHA3-512("abc")
-  ✓ SHAKE128("", 32)
-  ✓ SHAKE256("", 64)
-  ✓ SHA3-256(200 × 0xA3)
-  ✓ Digest Eq (same input)
-  ✓ Digest Eq (different input)
-  ✓ fromHex roundtrip
-
-15 passed, 0 failed
-```
-
-
-
-### References
-
-- [NIST FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf) — SHA-3 Standard
-- [Errata](https://csrc.nist.gov/publications/detail/fips/202/final) — Algorithm 10 Step 1 correction (`0 ≤ i < 2m`)
+The library name is `(<ModuleName> foreign)` where `<ModuleName>` matches
+the PureScript module name. All functions must be curried (nested lambdas)
+to match PureScript's calling convention.
