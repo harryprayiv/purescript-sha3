@@ -40,6 +40,8 @@ A flake is provided for development:
 ```bash
 nix develop
 spago build
+spago test            # tests only
+spago test -- --bench # tests + benchmarks
 ```
 
 
