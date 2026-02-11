@@ -3,7 +3,7 @@
 // Keccak-f[1600] permutation and sponge construction.
 // Adds Buffer-native sponge to eliminate Array<->Buffer conversions.
 
-// ── Round Constants (flat interleaved lo/hi, same as js-sha3) ───────────────
+// ── Round Constants (flat interleaved lo/hi ───────────────
 
 var RC = [
   1, 0, 32898, 0, 32906, 2147483648, 2147516416, 2147483648, 32907, 0,
