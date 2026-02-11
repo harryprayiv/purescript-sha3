@@ -12,8 +12,10 @@ package:
     - prelude
     - strings
   test:
-    main: Test.Crypto.SHA3
-    dependencies: []
+    # main: Test.Crypto.SHA3
+    main: Test.Main
+    dependencies:
+      - node-buffer
 workspace:
   packageSet:
     registry: 73.0.0

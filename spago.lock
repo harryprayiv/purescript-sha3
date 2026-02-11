@@ -18,7 +18,9 @@
           ]
         },
         "test": {
-          "dependencies": []
+          "dependencies": [
+            "node-buffer"
+          ]
         }
       }
     },
