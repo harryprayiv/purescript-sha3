@@ -1,18 +1,12 @@
-export function bufferToArray(buf) {
-  return Array.from(buf);
-}
-
-export function bufferFromArray(arr) {
-  return Buffer.from(arr);
-}
+// Crypto.SHA3 FFI
 
 export function bufferToHex(buf) {
   return buf.toString("hex");
 }
 
 export function bufferFromHex(success) {
-  return function(failure) {
-    return function(str) {
+  return function (failure) {
+    return function (str) {
       if (str.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(str)) {
         return failure;
       }
@@ -26,7 +20,7 @@ export function stringToUtf8Buffer(str) {
 }
 
 export function eqBuffer(a) {
-  return function(b) {
+  return function (b) {
     return a.equals(b);
   };
 }

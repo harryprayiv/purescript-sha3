@@ -37,8 +37,6 @@ import Node.Buffer (Buffer)
 -- FFI
 -------------------------------------------------------------------------------
 
-foreign import bufferToArray   :: Buffer -> Array Int
-foreign import bufferFromArray :: Array Int -> Buffer
 foreign import bufferToHex     :: Buffer -> String
 foreign import bufferFromHex   :: (Buffer -> Maybe Buffer) -> (forall a. Maybe a) -> String -> Maybe Buffer
 foreign import stringToUtf8Buffer :: String -> Buffer
@@ -77,12 +75,10 @@ instance hashableBuffer :: Hashable Buffer where
 hashBuffer :: SHA3 -> Buffer -> Digest
 hashBuffer variant buff =
   let
-    bytes     = bufferToArray buff
     rateBytes = variantRate variant
     outBytes  = variantLength variant
-    result    = Keccak.sponge rateBytes 0x06 outBytes bytes
   in
-    Digest (bufferFromArray result)
+    Digest (Keccak.spongeBuffer rateBytes 0x06 outBytes buff)
 
 -------------------------------------------------------------------------------
 -- SHA-3 Hash Functions
@@ -112,13 +108,13 @@ sha3_512 = hash SHA3_512
 -- | First argument is the desired output length in bytes.
 shake128 :: Int -> Buffer -> Buffer
 shake128 outputBytes buff =
-  bufferFromArray (Keccak.sponge 168 0x1F outputBytes (bufferToArray buff))
+  Keccak.spongeBuffer 168 0x1F outputBytes buff
 
 -- | SHAKE256: 256-bit security, variable output length.
 -- | First argument is the desired output length in bytes.
 shake256 :: Int -> Buffer -> Buffer
 shake256 outputBytes buff =
-  bufferFromArray (Keccak.sponge 136 0x1F outputBytes (bufferToArray buff))
+  Keccak.spongeBuffer 136 0x1F outputBytes buff
 
 -------------------------------------------------------------------------------
 -- Serialization

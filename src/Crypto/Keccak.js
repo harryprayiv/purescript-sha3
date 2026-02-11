@@ -1,10 +1,10 @@
 // Crypto.SHA3.Keccak — Optimized FFI
 //
 // Keccak-f[1600] permutation and sponge construction.
-// Closely follows the js-sha3 approach: split 32-bit representation,
-// 50 local variables for the B intermediate, fully unrolled ρ+π and χ.
+// Matches js-sha3's fully-unrolled permutation with local variables.
+// Adds Buffer-native sponge to eliminate Array<->Buffer conversions.
 
-// ── Round Constants (flat array, lo/hi interleaved) ─────────────────────────
+// ── Round Constants (flat interleaved lo/hi, same as js-sha3) ───────────────
 
 var RC = [
   1, 0, 32898, 0, 32906, 2147483648, 2147516416, 2147483648, 32907, 0,
@@ -15,7 +15,10 @@ var RC = [
   2147483649, 0, 2147516424, 2147483648
 ];
 
+var SHIFT = [0, 8, 16, 24];
+
 // ── Keccak-f[1600] Permutation ──────────────────────────────────────────────
+// Identical to js-sha3's f(): 50 local vars, fully unrolled ρ+π and χ.
 
 function f(s) {
   var h, l, n,
@@ -27,7 +30,6 @@ function f(s) {
     b40, b41, b42, b43, b44, b45, b46, b47, b48, b49;
 
   for (n = 0; n < 48; n += 2) {
-    // ── θ ─────────────────────────────────────────────────────────────
     c0 = s[0] ^ s[10] ^ s[20] ^ s[30] ^ s[40];
     c1 = s[1] ^ s[11] ^ s[21] ^ s[31] ^ s[41];
     c2 = s[2] ^ s[12] ^ s[22] ^ s[32] ^ s[42];
@@ -41,43 +43,31 @@ function f(s) {
 
     h = c8 ^ ((c2 << 1) | (c3 >>> 31));
     l = c9 ^ ((c3 << 1) | (c2 >>> 31));
-    s[0] ^= h; s[1] ^= l;
-    s[10] ^= h; s[11] ^= l;
-    s[20] ^= h; s[21] ^= l;
-    s[30] ^= h; s[31] ^= l;
+    s[0] ^= h; s[1] ^= l; s[10] ^= h; s[11] ^= l;
+    s[20] ^= h; s[21] ^= l; s[30] ^= h; s[31] ^= l;
     s[40] ^= h; s[41] ^= l;
     h = c0 ^ ((c4 << 1) | (c5 >>> 31));
     l = c1 ^ ((c5 << 1) | (c4 >>> 31));
-    s[2] ^= h; s[3] ^= l;
-    s[12] ^= h; s[13] ^= l;
-    s[22] ^= h; s[23] ^= l;
-    s[32] ^= h; s[33] ^= l;
+    s[2] ^= h; s[3] ^= l; s[12] ^= h; s[13] ^= l;
+    s[22] ^= h; s[23] ^= l; s[32] ^= h; s[33] ^= l;
     s[42] ^= h; s[43] ^= l;
     h = c2 ^ ((c6 << 1) | (c7 >>> 31));
     l = c3 ^ ((c7 << 1) | (c6 >>> 31));
-    s[4] ^= h; s[5] ^= l;
-    s[14] ^= h; s[15] ^= l;
-    s[24] ^= h; s[25] ^= l;
-    s[34] ^= h; s[35] ^= l;
+    s[4] ^= h; s[5] ^= l; s[14] ^= h; s[15] ^= l;
+    s[24] ^= h; s[25] ^= l; s[34] ^= h; s[35] ^= l;
     s[44] ^= h; s[45] ^= l;
     h = c4 ^ ((c8 << 1) | (c9 >>> 31));
     l = c5 ^ ((c9 << 1) | (c8 >>> 31));
-    s[6] ^= h; s[7] ^= l;
-    s[16] ^= h; s[17] ^= l;
-    s[26] ^= h; s[27] ^= l;
-    s[36] ^= h; s[37] ^= l;
+    s[6] ^= h; s[7] ^= l; s[16] ^= h; s[17] ^= l;
+    s[26] ^= h; s[27] ^= l; s[36] ^= h; s[37] ^= l;
     s[46] ^= h; s[47] ^= l;
     h = c6 ^ ((c0 << 1) | (c1 >>> 31));
     l = c7 ^ ((c1 << 1) | (c0 >>> 31));
-    s[8] ^= h; s[9] ^= l;
-    s[18] ^= h; s[19] ^= l;
-    s[28] ^= h; s[29] ^= l;
-    s[38] ^= h; s[39] ^= l;
+    s[8] ^= h; s[9] ^= l; s[18] ^= h; s[19] ^= l;
+    s[28] ^= h; s[29] ^= l; s[38] ^= h; s[39] ^= l;
     s[48] ^= h; s[49] ^= l;
 
-    // ── ρ + π ─────────────────────────────────────────────────────────
-    b0 = s[0];
-    b1 = s[1];
+    b0 = s[0]; b1 = s[1];
     b32 = (s[11] << 4) | (s[10] >>> 28);
     b33 = (s[10] << 4) | (s[11] >>> 28);
     b14 = (s[20] << 3) | (s[21] >>> 29);
@@ -127,135 +117,115 @@ function f(s) {
     b8 = (s[48] << 14) | (s[49] >>> 18);
     b9 = (s[49] << 14) | (s[48] >>> 18);
 
-    // ── χ ─────────────────────────────────────────────────────────────
-    s[0] = b0 ^ (~b2 & b4);
-    s[1] = b1 ^ (~b3 & b5);
-    s[10] = b10 ^ (~b12 & b14);
-    s[11] = b11 ^ (~b13 & b15);
-    s[20] = b20 ^ (~b22 & b24);
-    s[21] = b21 ^ (~b23 & b25);
-    s[30] = b30 ^ (~b32 & b34);
-    s[31] = b31 ^ (~b33 & b35);
-    s[40] = b40 ^ (~b42 & b44);
-    s[41] = b41 ^ (~b43 & b45);
-    s[2] = b2 ^ (~b4 & b6);
-    s[3] = b3 ^ (~b5 & b7);
-    s[12] = b12 ^ (~b14 & b16);
-    s[13] = b13 ^ (~b15 & b17);
-    s[22] = b22 ^ (~b24 & b26);
-    s[23] = b23 ^ (~b25 & b27);
-    s[32] = b32 ^ (~b34 & b36);
-    s[33] = b33 ^ (~b35 & b37);
-    s[42] = b42 ^ (~b44 & b46);
-    s[43] = b43 ^ (~b45 & b47);
-    s[4] = b4 ^ (~b6 & b8);
-    s[5] = b5 ^ (~b7 & b9);
-    s[14] = b14 ^ (~b16 & b18);
-    s[15] = b15 ^ (~b17 & b19);
-    s[24] = b24 ^ (~b26 & b28);
-    s[25] = b25 ^ (~b27 & b29);
-    s[34] = b34 ^ (~b36 & b38);
-    s[35] = b35 ^ (~b37 & b39);
-    s[44] = b44 ^ (~b46 & b48);
-    s[45] = b45 ^ (~b47 & b49);
-    s[6] = b6 ^ (~b8 & b0);
-    s[7] = b7 ^ (~b9 & b1);
-    s[16] = b16 ^ (~b18 & b10);
-    s[17] = b17 ^ (~b19 & b11);
-    s[26] = b26 ^ (~b28 & b20);
-    s[27] = b27 ^ (~b29 & b21);
-    s[36] = b36 ^ (~b38 & b30);
-    s[37] = b37 ^ (~b39 & b31);
-    s[46] = b46 ^ (~b48 & b40);
-    s[47] = b47 ^ (~b49 & b41);
-    s[8] = b8 ^ (~b0 & b2);
-    s[9] = b9 ^ (~b1 & b3);
-    s[18] = b18 ^ (~b10 & b12);
-    s[19] = b19 ^ (~b11 & b13);
-    s[28] = b28 ^ (~b20 & b22);
-    s[29] = b29 ^ (~b21 & b23);
-    s[38] = b38 ^ (~b30 & b32);
-    s[39] = b39 ^ (~b31 & b33);
-    s[48] = b48 ^ (~b40 & b42);
-    s[49] = b49 ^ (~b41 & b43);
+    s[0] = b0 ^ (~b2 & b4); s[1] = b1 ^ (~b3 & b5);
+    s[10] = b10 ^ (~b12 & b14); s[11] = b11 ^ (~b13 & b15);
+    s[20] = b20 ^ (~b22 & b24); s[21] = b21 ^ (~b23 & b25);
+    s[30] = b30 ^ (~b32 & b34); s[31] = b31 ^ (~b33 & b35);
+    s[40] = b40 ^ (~b42 & b44); s[41] = b41 ^ (~b43 & b45);
+    s[2] = b2 ^ (~b4 & b6); s[3] = b3 ^ (~b5 & b7);
+    s[12] = b12 ^ (~b14 & b16); s[13] = b13 ^ (~b15 & b17);
+    s[22] = b22 ^ (~b24 & b26); s[23] = b23 ^ (~b25 & b27);
+    s[32] = b32 ^ (~b34 & b36); s[33] = b33 ^ (~b35 & b37);
+    s[42] = b42 ^ (~b44 & b46); s[43] = b43 ^ (~b45 & b47);
+    s[4] = b4 ^ (~b6 & b8); s[5] = b5 ^ (~b7 & b9);
+    s[14] = b14 ^ (~b16 & b18); s[15] = b15 ^ (~b17 & b19);
+    s[24] = b24 ^ (~b26 & b28); s[25] = b25 ^ (~b27 & b29);
+    s[34] = b34 ^ (~b36 & b38); s[35] = b35 ^ (~b37 & b39);
+    s[44] = b44 ^ (~b46 & b48); s[45] = b45 ^ (~b47 & b49);
+    s[6] = b6 ^ (~b8 & b0); s[7] = b7 ^ (~b9 & b1);
+    s[16] = b16 ^ (~b18 & b10); s[17] = b17 ^ (~b19 & b11);
+    s[26] = b26 ^ (~b28 & b20); s[27] = b27 ^ (~b29 & b21);
+    s[36] = b36 ^ (~b38 & b30); s[37] = b37 ^ (~b39 & b31);
+    s[46] = b46 ^ (~b48 & b40); s[47] = b47 ^ (~b49 & b41);
+    s[8] = b8 ^ (~b0 & b2); s[9] = b9 ^ (~b1 & b3);
+    s[18] = b18 ^ (~b10 & b12); s[19] = b19 ^ (~b11 & b13);
+    s[28] = b28 ^ (~b20 & b22); s[29] = b29 ^ (~b21 & b23);
+    s[38] = b38 ^ (~b30 & b32); s[39] = b39 ^ (~b31 & b33);
+    s[48] = b48 ^ (~b40 & b42); s[49] = b49 ^ (~b41 & b43);
 
-    // ── ι ─────────────────────────────────────────────────────────────
-    s[0] ^= RC[n];
-    s[1] ^= RC[n + 1];
+    s[0] ^= RC[n]; s[1] ^= RC[n + 1];
   }
 }
 
-// ── Sponge Construction (FIPS 202 §4) ──────────────────────────────────────
-
-var SHIFT = [0, 8, 16, 24];
+// ── Sponge (Array Int interface, for backward compat) ───────────────────────
 
 export function sponge(rateBytes) {
   return function (suffixByte) {
     return function (outputBytes) {
       return function (message) {
-        var msgLen = message.length;
-        var blockCount = rateBytes >> 2;
-
-        // ── State ────────────────────────────────────────────────────
-        var s = [];
-        for (var i = 0; i < 50; ++i) s[i] = 0;
-
-        // ── Absorb (process message + inline padding) ────────────────
-        var blocks = [];
-        var index = 0;
-        var byteIndex = 0;
-
-        // Process message bytes
-        while (index < msgLen) {
-          if (byteIndex === 0) {
-            for (i = 0; i < blockCount + 1; ++i) blocks[i] = 0;
-          }
-
-          for (; index < msgLen && byteIndex < rateBytes; ++index) {
-            blocks[byteIndex >> 2] |= message[index] << SHIFT[byteIndex++ & 3];
-          }
-
-          if (byteIndex >= rateBytes) {
-            for (i = 0; i < blockCount; ++i) s[i] ^= blocks[i];
-            f(s);
-            byteIndex = 0;
-          }
-        }
-
-        // ── Padding (pad10*1, FIPS 202 §5.1) ────────────────────────
-        if (byteIndex === 0) {
-          for (i = 0; i < blockCount + 1; ++i) blocks[i] = 0;
-        }
-        blocks[byteIndex >> 2] |= suffixByte << SHIFT[byteIndex & 3];
-        blocks[(rateBytes - 1) >> 2] |= 0x80 << SHIFT[(rateBytes - 1) & 3];
-        for (i = 0; i < blockCount; ++i) s[i] ^= blocks[i];
-        f(s);
-
-        // ── Squeeze ──────────────────────────────────────────────────
-        var output = [];
-        var outPos = 0;
-        var block;
-        var outputBlocks = outputBytes >> 2;
-
-        while (outPos < outputBytes) {
-          for (i = 0; i < blockCount && outPos < outputBytes; ++i) {
-            block = s[i];
-            if (outPos < outputBytes) output[outPos++] = block & 0xFF;
-            if (outPos < outputBytes) output[outPos++] = (block >> 8) & 0xFF;
-            if (outPos < outputBytes) output[outPos++] = (block >> 16) & 0xFF;
-            if (outPos < outputBytes) output[outPos++] = (block >> 24) & 0xFF;
-          }
-          if (outPos < outputBytes) f(s);
-        }
-
-        return output;
+        return Array.from(spongeImpl(rateBytes, suffixByte, outputBytes, message, message.length));
       };
     };
   };
 }
 
-// ── keccakF1600 wrapper for PureScript State type ───────────────────────────
-// State = Array { hi :: Int, lo :: Int }  (25 lanes)
+// ── Buffer-native sponge (zero-copy hot path) ──────────────────────────────
+
+export function spongeBuffer(rateBytes) {
+  return function (suffixByte) {
+    return function (outputBytes) {
+      return function (buf) {
+        return Buffer.from(spongeImpl(rateBytes, suffixByte, outputBytes, buf, buf.length));
+      };
+    };
+  };
+}
+
+// ── Shared sponge implementation ────────────────────────────────────────────
+// Accepts anything indexable by [i] with a known length (Array, Buffer, Uint8Array).
+
+function spongeImpl(rateBytes, suffixByte, outputBytes, message, msgLen) {
+  var blockCount = rateBytes >> 2;
+  var s = [];
+  var i;
+  for (i = 0; i < 50; ++i) s[i] = 0;
+
+  // ── Absorb ─────────────────────────────────────────────────────────
+  var blocks = [];
+  var index = 0;
+  var byteIndex = 0;
+
+  while (index < msgLen) {
+    if (byteIndex === 0) {
+      for (i = 0; i < blockCount + 1; ++i) blocks[i] = 0;
+    }
+    for (; index < msgLen && byteIndex < rateBytes; ++index) {
+      blocks[byteIndex >> 2] |= message[index] << SHIFT[byteIndex++ & 3];
+    }
+    if (byteIndex >= rateBytes) {
+      for (i = 0; i < blockCount; ++i) s[i] ^= blocks[i];
+      f(s);
+      byteIndex = 0;
+    }
+  }
+
+  // ── Padding (pad10*1) ──────────────────────────────────────────────
+  if (byteIndex === 0) {
+    for (i = 0; i < blockCount + 1; ++i) blocks[i] = 0;
+  }
+  blocks[byteIndex >> 2] |= suffixByte << SHIFT[byteIndex & 3];
+  blocks[(rateBytes - 1) >> 2] |= 0x80 << SHIFT[(rateBytes - 1) & 3];
+  for (i = 0; i < blockCount; ++i) s[i] ^= blocks[i];
+  f(s);
+
+  // ── Squeeze ────────────────────────────────────────────────────────
+  var output = new Uint8Array(outputBytes);
+  var outPos = 0;
+  var block;
+  while (outPos < outputBytes) {
+    for (i = 0; i < blockCount && outPos < outputBytes; ++i) {
+      block = s[i];
+      if (outPos < outputBytes) output[outPos++] = block & 0xFF;
+      if (outPos < outputBytes) output[outPos++] = (block >> 8) & 0xFF;
+      if (outPos < outputBytes) output[outPos++] = (block >> 16) & 0xFF;
+      if (outPos < outputBytes) output[outPos++] = (block >> 24) & 0xFF;
+    }
+    if (outPos < outputBytes) f(s);
+  }
+  return output;
+}
+
+// ── keccakF1600 (PureScript State type wrapper, for tests/bench) ────────────
 
 export function keccakF1600(state) {
   var s = [];
@@ -263,9 +233,7 @@ export function keccakF1600(state) {
     s[i * 2]     = state[i].lo;
     s[i * 2 + 1] = state[i].hi;
   }
-
   f(s);
-
   var result = new Array(25);
   for (var i = 0; i < 25; i++) {
     result[i] = { hi: s[i * 2 + 1], lo: s[i * 2] };

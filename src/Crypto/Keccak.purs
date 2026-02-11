@@ -5,10 +5,13 @@
 -- | for the public API.
 module Crypto.SHA3.Keccak
   ( sponge
+  , spongeBuffer
   , keccakF1600
   , Lane
   , State
   ) where
+
+import Node.Buffer (Buffer)
 
 -------------------------------------------------------------------------------
 -- Types (exported for testing/benchmarking)
@@ -24,10 +27,12 @@ type State = Array Lane
 -- FFI
 -------------------------------------------------------------------------------
 
--- | Full sponge construction: absorb + squeeze.
--- | sponge rateBytes suffixByte outputBytes message
+-- | Sponge construction operating on Array Int (for raw byte-level tests).
 foreign import sponge :: Int -> Int -> Int -> Array Int -> Array Int
 
+-- | Sponge construction operating directly on Node Buffer (zero-copy hot path).
+foreign import spongeBuffer :: Int -> Int -> Int -> Buffer -> Buffer
+
 -- | Keccak-f[1600] permutation on a 25-lane state.
--- | Primarily exposed for benchmarking; the hot path uses `sponge` directly.
+-- | Primarily exposed for benchmarking.
 foreign import keccakF1600 :: State -> State
