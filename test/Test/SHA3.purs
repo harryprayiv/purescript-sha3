@@ -9,7 +9,6 @@ import Data.Foldable (for_)
 import Data.Maybe (Maybe(..))
 import Effect (Effect)
 import Effect.Console (log)
-import Test.SHA3.Bench as Bench
 
 type TestCase =
   { name     :: String

@@ -81,7 +81,8 @@ Requires `purescm` (the Chez Scheme backend for PureScript) and Chez Scheme.
 
 ```bash
 spago build
-purescm run
+purescm run --main Test.Main          # tests only
+BENCH=1 purescm run --main Test.Main  # tests + benchmarks
 ```
 
 ## Test Vectors

@@ -7,6 +7,7 @@ import Crypto.Keccak as Keccak
 import Data.Array as A
 import Effect (Effect)
 import Effect.Console (log)
+import Test.SHA3 as SHA3Tests
 
 -------------------------------------------------------------------------------
 -- FFI
@@ -144,3 +145,11 @@ benchSuite = do
   log "\n═══════════════════════════════════════════════════════════"
   log "  Done."
   log "═══════════════════════════════════════════════════════════"
+
+
+main :: Effect Unit
+main = do
+  SHA3Tests.main
+  log ""
+  benchSuite
+  
