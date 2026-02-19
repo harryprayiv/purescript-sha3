@@ -37,7 +37,7 @@ let
 
     meta = {
       description = "Chez Scheme back-end for PureScript";
-      homepage = "https://github.com/purescm/purescm";
+      homepage = "https://github.com/harryprayiv/purescm";
       license = lib.licenses.asl20;
       mainProgram = "purescm";
     };
