@@ -1,18 +1,6 @@
 -- | SHA-3 (FIPS 202) cryptographic hash functions and extendable-output functions.
 -- |
--- | Pure PureScript implementation of the Keccak-f[1600] permutation and
--- | sponge construction, as specified in NIST FIPS 202 (August 2015).
--- |
--- | This version targets the purescm (Chez Scheme) backend, using native
--- | 64-bit integers for Keccak lanes instead of the JS backend's hi/lo pairs.
--- |
--- | Usage:
--- | ```purescript
--- | import Crypto.SHA3 (SHA3(..), hash, toString)
--- |
--- | digest = hash SHA3_256 "hello world"
--- | hex    = toString digest
--- | ```
+-- | Chez Scheme backend: uses native bytevectors for zero-copy sponge I/O.
 module Crypto.SHA3
   ( SHA3(..)
   , Digest
@@ -24,48 +12,39 @@ module Crypto.SHA3
   , sha3_512
   , shake128
   , shake256
-  , toBytes
   , toString
   , fromHex
-  , fromBytes
+  , toArray
+  , fromArray
   ) where
 
 import Prelude
 
-import Crypto.Keccak as Keccak
+import Crypto.Keccak (ByteArray, spongeNativeBv)
 import Data.Maybe (Maybe(..))
 
 -------------------------------------------------------------------------------
--- FFI (Chez Scheme)
+-- FFI
 -------------------------------------------------------------------------------
 
--- | Convert a String to an array of UTF-8 byte values.
-foreign import stringToUtf8 :: String -> Array Int
-
--- | Encode an array of bytes as a lowercase hex string.
-foreign import bytesToHex :: Array Int -> String
-
--- | Decode a hex string to an array of bytes, or Nothing if invalid.
-foreign import hexToBytes_ :: (Array Int -> Maybe (Array Int))
-                           -> Maybe (Array Int)
-                           -> String
-                           -> Maybe (Array Int)
-
-hexToBytes :: String -> Maybe (Array Int)
-hexToBytes = hexToBytes_ Just Nothing
+foreign import stringToUtf8Bv   :: String -> ByteArray
+foreign import arrayToByteArray  :: Array Int -> ByteArray
+foreign import byteArrayToArray  :: ByteArray -> Array Int
+foreign import bytesToHex        :: ByteArray -> String
+foreign import hexToByteArray    :: String -> ByteArray
+foreign import eqByteArray       :: ByteArray -> ByteArray -> Boolean
+foreign import byteArrayLength   :: ByteArray -> Int
 
 -------------------------------------------------------------------------------
 -- Types
 -------------------------------------------------------------------------------
 
--- | SHA-3 hash function variants.
 data SHA3 = SHA3_224 | SHA3_256 | SHA3_384 | SHA3_512
 
--- | The output of a SHA-3 hash function, stored as raw bytes.
-newtype Digest = Digest (Array Int)
+newtype Digest = Digest ByteArray
 
 instance eqDigest :: Eq Digest where
-  eq (Digest a) (Digest b) = a == b
+  eq (Digest a) (Digest b) = eqByteArray a b
 
 instance showDigest :: Show Digest where
   show d = "(Digest " <> toString d <> ")"
@@ -74,83 +53,69 @@ instance showDigest :: Show Digest where
 -- Hashable
 -------------------------------------------------------------------------------
 
--- | Types that can be hashed with a SHA-3 function.
 class Hashable a where
   hash :: SHA3 -> a -> Digest
 
 instance hashableString :: Hashable String where
-  hash variant value = hashBytes variant (stringToUtf8 value)
+  hash variant s = hashBv variant (stringToUtf8Bv s)
 
-instance hashableBytes :: Hashable (Array Int) where
-  hash = hashBytes
+instance hashableArray :: Hashable (Array Int) where
+  hash variant arr = hashBv variant (arrayToByteArray arr)
 
-hashBytes :: SHA3 -> Array Int -> Digest
-hashBytes variant bytes =
-  let
-    rateBytes = variantRate variant
-    outBytes  = variantLength variant
-    result    = Keccak.sponge rateBytes 0x06 outBytes bytes
-  in
-    Digest result
+hashBv :: SHA3 -> ByteArray -> Digest
+hashBv variant bv =
+  Digest (spongeNativeBv (variantRate variant) 0x06 (variantLength variant) bv)
 
 -------------------------------------------------------------------------------
--- SHA-3 Hash Functions
+-- Convenience hash functions
 -------------------------------------------------------------------------------
 
--- | SHA3-224: 224-bit (28-byte) digest, rate = 1152 bits.
-sha3_224 :: Array Int -> Digest
+sha3_224 :: forall a. Hashable a => a -> Digest
 sha3_224 = hash SHA3_224
 
--- | SHA3-256: 256-bit (32-byte) digest, rate = 1088 bits.
-sha3_256 :: Array Int -> Digest
+sha3_256 :: forall a. Hashable a => a -> Digest
 sha3_256 = hash SHA3_256
 
--- | SHA3-384: 384-bit (48-byte) digest, rate = 832 bits.
-sha3_384 :: Array Int -> Digest
+sha3_384 :: forall a. Hashable a => a -> Digest
 sha3_384 = hash SHA3_384
 
--- | SHA3-512: 512-bit (64-byte) digest, rate = 576 bits.
-sha3_512 :: Array Int -> Digest
+sha3_512 :: forall a. Hashable a => a -> Digest
 sha3_512 = hash SHA3_512
 
 -------------------------------------------------------------------------------
--- SHA-3 Extendable-Output Functions (XOFs)
+-- SHAKE XOFs (variable-length output, Array Int API)
 -------------------------------------------------------------------------------
 
--- | SHAKE128: 128-bit security, variable output length.
--- | First argument is the desired output length in bytes.
 shake128 :: Int -> Array Int -> Array Int
-shake128 outputBytes bytes =
-  Keccak.sponge 168 0x1F outputBytes bytes
+shake128 outputBytes arr =
+  byteArrayToArray (spongeNativeBv 168 0x1F outputBytes (arrayToByteArray arr))
 
--- | SHAKE256: 256-bit security, variable output length.
--- | First argument is the desired output length in bytes.
 shake256 :: Int -> Array Int -> Array Int
-shake256 outputBytes bytes =
-  Keccak.sponge 136 0x1F outputBytes bytes
+shake256 outputBytes arr =
+  byteArrayToArray (spongeNativeBv 136 0x1F outputBytes (arrayToByteArray arr))
 
 -------------------------------------------------------------------------------
 -- Serialization
 -------------------------------------------------------------------------------
 
--- | Extract the raw bytes from a digest.
-toBytes :: Digest -> Array Int
-toBytes (Digest bs) = bs
-
--- | Wrap raw bytes as a digest. No validation is performed on length.
-fromBytes :: Array Int -> Maybe Digest
-fromBytes = Just <<< Digest
-
--- | Hex-encode a digest.
 toString :: Digest -> String
-toString (Digest bs) = bytesToHex bs
+toString (Digest bv) = bytesToHex bv
 
--- | Decode a hex string to a digest.
 fromHex :: String -> Maybe Digest
-fromHex s = map Digest (hexToBytes s)
+fromHex hex =
+  let bv = hexToByteArray hex
+  in if byteArrayLength bv > 0 || hex == ""
+     then Just (Digest bv)
+     else Nothing
+
+toArray :: Digest -> Array Int
+toArray (Digest bv) = byteArrayToArray bv
+
+fromArray :: Array Int -> Digest
+fromArray arr = Digest (arrayToByteArray arr)
 
 -------------------------------------------------------------------------------
--- Internal Helpers
+-- Internal
 -------------------------------------------------------------------------------
 
 variantRate :: SHA3 -> Int

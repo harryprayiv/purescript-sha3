@@ -1,8 +1,9 @@
 (optimize-level 3)
 
 (library (Crypto.Keccak foreign)
-  (export roundConstants orInt spongeOptimized keccakF1600Optimized)
-  (import (chezscheme) (srfi :214))
+  (export roundConstants orInt spongeOptimized keccakF1600Optimized
+          spongeNativeBv)
+  (import (chezscheme) (srfi :214) (purescm bytevector))
 
   ;; 32-bit left shift, fully fixnum. Pre-masks input so fxsll never overflows.
   (define-syntax sll32
@@ -248,7 +249,7 @@
         (fxlogior (fxsll (bytevector-u8-ref bv (fx+ offset 2)) 16)
                   (fxsll (bytevector-u8-ref bv (fx+ offset 3)) 24)))))
 
-  ;; ── Sponge ─────────────────────────────────────────────────────────────
+  ;; ── Sponge (original, flexvector API) ──────────────────────────────────
 
   (define spongeOptimized
     (lambda (rate-bytes)
@@ -321,6 +322,72 @@
                       ((fx= i output-bytes) result)
                     (flexvector-set! result i
                       (bytevector-u8-ref out-bv i)))))))))))
+
+  ;; ── Sponge (native bytevector I/O — zero flexvector conversion) ────────
+  ;; Same algorithm as spongeOptimized but takes/returns bytevectors directly.
+
+  (define spongeNativeBv
+    (lambda (rate-bytes)
+      (lambda (suffix-byte)
+        (lambda (output-bytes)
+          (lambda (msg)
+            (let* ([msg-len (bytevector-length msg)]
+                   [q (fx- rate-bytes (fxmod msg-len rate-bytes))]
+                   [padded-len (fx+ msg-len q)]
+                   [padded (make-bytevector padded-len 0)]
+                   [_ (bytevector-copy! msg 0 padded 0 msg-len)]
+                   [_ (if (fx= q 1)
+                          (bytevector-u8-set! padded msg-len
+                            (fxlogior suffix-byte #x80))
+                          (begin
+                            (bytevector-u8-set! padded msg-len suffix-byte)
+                            (bytevector-u8-set! padded (fx- padded-len 1) #x80)))]
+                   [s (make-vector 50 0)]
+                   [num-lanes (fxdiv rate-bytes 8)]
+                   [num-blocks (fxdiv padded-len rate-bytes)])
+
+              ;; Absorb (uses same bytes-to-hi/lo helpers)
+              (do ([blk 0 (fx+ blk 1)])
+                  ((fx= blk num-blocks))
+                (let ([off (fx* blk rate-bytes)])
+                  (do ([lane 0 (fx+ lane 1)])
+                      ((fx= lane num-lanes))
+                    (let* ([byte-off (fx+ off (fx* lane 8))]
+                           [lane2 (fx* lane 2)])
+                      (vector-set! s lane2
+                        (fxlogxor (vector-ref s lane2)
+                                  (bytes-to-hi padded byte-off)))
+                      (vector-set! s (fx+ lane2 1)
+                        (fxlogxor (vector-ref s (fx+ lane2 1))
+                                  (bytes-to-lo padded byte-off))))))
+                (keccak-f! s))
+
+              ;; Squeeze — return bytevector directly (no flexvector copy)
+              (let ([out-bv (make-bytevector output-bytes)])
+                (let loop ([pos 0])
+                  (when (fx< pos output-bytes)
+                    (do ([lane 0 (fx+ lane 1)])
+                        ((or (fx= lane num-lanes)
+                             (fx>= (fx+ pos (fx* lane 8)) output-bytes)))
+                      (let* ([base (fx+ pos (fx* lane 8))]
+                             [lane2 (fx* lane 2)]
+                             [hi (vector-ref s lane2)]
+                             [lo (vector-ref s (fx+ lane2 1))])
+                        ;; Write lo bytes (0-3)
+                        (do ([byte-idx 0 (fx+ byte-idx 1)])
+                            ((or (fx= byte-idx 4) (fx>= (fx+ base byte-idx) output-bytes)))
+                          (bytevector-u8-set! out-bv (fx+ base byte-idx)
+                            (fxlogand (fxsrl lo (fx* byte-idx 8)) #xFF)))
+                        ;; Write hi bytes (4-7)
+                        (do ([byte-idx 0 (fx+ byte-idx 1)])
+                            ((or (fx= byte-idx 4) (fx>= (fx+ base (fx+ byte-idx 4)) output-bytes)))
+                          (bytevector-u8-set! out-bv (fx+ base (fx+ byte-idx 4))
+                            (fxlogand (fxsrl hi (fx* byte-idx 8)) #xFF)))))
+                    (let ([next-pos (fx+ pos rate-bytes)])
+                      (when (fx< next-pos output-bytes)
+                        (keccak-f! s))
+                      (loop next-pos))))
+                out-bv)))))))
 
   ;; ── keccakF1600 wrapper ────────────────────────────────────────────────
 

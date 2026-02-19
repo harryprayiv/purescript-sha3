@@ -5,6 +5,8 @@
 module Crypto.Keccak
   ( sponge
   , keccakF1600
+  , ByteArray
+  , spongeNativeBv
   ) where
 
 import Crypto.Word64 (Word64)
@@ -16,19 +18,24 @@ import Crypto.Word64 (Word64)
 type Bytes = Array Int
 type State = Array Word64
 
+-- | Opaque byte array — on Chez this IS a native bytevector, zero wrapping.
+foreign import data ByteArray :: Type
+
 -------------------------------------------------------------------------------
 -- FFI — optimized Chez Scheme implementations
 -------------------------------------------------------------------------------
 
--- | Optimized sponge: converts flexvector → bytevector internally,
--- | uses mutable state for the permutation, returns flexvector.
+-- | Optimized sponge (legacy): converts flexvector → bytevector internally.
 foreign import spongeOptimized :: Int -> Int -> Int -> Bytes -> Bytes
 
--- | Optimized keccakF1600: copies flexvector to mutable vector,
--- | runs permutation in place, returns new flexvector.
+-- | Native bytevector sponge: zero conversion overhead.
+-- | Takes and returns raw bytevectors.
+foreign import spongeNativeBv :: Int -> Int -> Int -> ByteArray -> ByteArray
+
+-- | Optimized keccakF1600.
 foreign import keccakF1600Optimized :: State -> State
 
--- Expose under the original names so SHA3.purs doesn't change.
+-- Expose under the original names so existing code doesn't change.
 
 sponge :: Int -> Int -> Int -> Bytes -> Bytes
 sponge = spongeOptimized
