@@ -2,6 +2,7 @@
   lib,
   buildNpmPackage,
   fetchNpmDeps,
+  fetchurl,
   testers,
 }:
 
@@ -10,6 +11,12 @@ let
 
   pname = "purescm";
   version = packageLock.packages."node_modules/${pname}".version;
+
+  # My bytevector.ss file — fetch directly from my fork
+  bytevector-ss = fetchurl {
+    url = "https://raw.githubusercontent.com/harryprayiv/purescm/bytevector/lib/purescm/bytevector.ss";
+    hash = "sha256-sbf2CyJok+tiyf/hwOOaDcn3G9tixBf+wjsZUg9SZdE=";  # build once, get the real hash
+  };
 
   package = buildNpmPackage {
     inherit pname version;
@@ -29,8 +36,11 @@ let
 
       # Patch hardcoded ICU version suffix to match nixpkgs ICU
       sed -i 's/_74"/_76"/g' $out/share/${pname}/node_modules/${pname}/lib/${pname}/pstring.ss
+
+      # Add bytevector runtime library from my fork
+      cp ${bytevector-ss} $out/share/${pname}/node_modules/${pname}/lib/${pname}/bytevector.ss
     '';
-    
+
     passthru.tests = {
       version = testers.testVersion { inherit package; };
     };
